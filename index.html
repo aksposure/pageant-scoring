@@ -223,59 +223,78 @@
 
     // --- Login View ---
     function renderLogin(root){
-      const mode = state.ui?.loginMode;
-      root.innerHTML = `
-        <div class="grid col-2">
-          <div class="card" ${mode==='judge'?'style="outline:1px solid var(--accent)"':''}>
-            <h3>Judge Login</h3>
-            <div class="spacer"></div>
-            <label>Your name</label>
-            <input id="judgeNameInp" placeholder="e.g., Judge Priya"/>
-            <div class="spacer"></div>
-            <button class="btn" id="judgeLocalBtn">Sign In as Judge</button>
-            <button class="btn" id="judgeAnonBtn">Sign in (Firebase Anonymous)</button>
-            <div class="spacer"></div>
-            <div class="muted">Anonymous sign-in requires Firebase to be configured in Settings after an admin logs in.</div>
-          </div>
+  const mode = state.ui?.loginMode;
+  root.innerHTML = `
+    <div class="grid col-2">
+      <div class="card" ${mode==='judge'?'style="outline:1px solid var(--accent)"':''}>
+        <h3>Judge Login</h3>
+        <div class="spacer"></div>
+        <label>Your name</label>
+        <input id="judgeNameInp" placeholder="e.g., Judge Priya"/>
+        <div class="spacer"></div>
+        <label>Judge PIN (required)</label>
+        <input id="judgeCodeInp" placeholder="e.g., 7429"/>
+        <div class="spacer"></div>
+        <button class="btn" id="judgeLocalBtn">Sign In as Judge</button>
+        <button class="btn" id="judgeAnonBtn">Sign in (Firebase Anonymous)</button>
+        <div class="spacer"></div>
+        <div class="muted">PIN must match one set by the admin in Setup.</div>
+      </div>
 
-          <div class="card" ${mode==='admin'?'style="outline:1px solid var(--accent)"':''}>
-            <h3>Admin Login</h3>
-            <div class="spacer"></div>
-            <label>Admin access code</label>
-            <input id="adminCodeInp" placeholder="Enter admin code" type="password"/>
-            <div class="spacer"></div>
-            <label>Your display name</label>
-            <input id="adminNameInp" placeholder="e.g., Event Director"/>
-            <div class="spacer"></div>
-            <button class="btn primary" id="adminLoginBtn">Sign In as Admin</button>
-            <div class="spacer"></div>
-            <div class="muted">Default code is <span class="mono">ADMIN123</span>. You can change it later in Settings.</div>
-          </div>
-        </div>
-      `;
+      <div class="card" ${mode==='admin'?'style="outline:1px solid var(--accent)"':''}>
+        <h3>Admin Login</h3>
+        <div class="spacer"></div>
+        <label>Admin access code</label>
+        <input id="adminCodeInp" placeholder="Enter admin code" type="password"/>
+        <div class="spacer"></div>
+        <label>Your display name</label>
+        <input id="adminNameInp" placeholder="e.g., Event Director"/>
+        <div class="spacer"></div>
+        <button class="btn primary" id="adminLoginBtn">Sign In as Admin</button>
+        <div class="spacer"></div>
+        <div class="muted">Default code is <span class="mono">ADMIN123</span>. You can change it later in Settings.</div>
+      </div>
+    </div>
+  `;
 
-      document.getElementById('adminLoginBtn').onclick = ()=>{
-        const code = (document.getElementById('adminCodeInp').value||'').trim();
-        const name = (document.getElementById('adminNameInp').value||'').trim() || 'Admin';
-        if(code !== getAdminCode()) { alert('Invalid admin code'); return; }
-        signInAdmin(name);
-      };
+  document.getElementById('adminLoginBtn').onclick = ()=>{
+    const code = (document.getElementById('adminCodeInp').value||'').trim();
+    const name = (document.getElementById('adminNameInp').value||'').trim() || 'Admin';
+    if(code !== getAdminCode()) { alert('Invalid admin code'); return; }
+    signInAdmin(name);
+  };
 
-      document.getElementById('judgeLocalBtn').onclick = ()=>{
-        const name = (document.getElementById('judgeNameInp').value||'').trim();
-        if(!name){ alert('Please enter your name'); return; }
-        signInJudge(name);
-      };
+  function findJudgeByCode(code){
+    const c = (code||'').trim();
+    if(!c) return null;
+    return state.judges.find(j=> String(j.code||'').trim()===c) || null;
+  }
 
-      document.getElementById('judgeAnonBtn').onclick = async ()=>{
-        const name = (document.getElementById('judgeNameInp').value||'').trim() || 'Judge';
-        try{
-          await ensureFirebase();
-          const r = await fb.auth.signInAnonymously();
-          signInJudge(name, r.user.uid);
-        }catch(e){ alert('Anonymous sign-in failed: '+e.message+'\nTip: Admin must enable Firebase first.'); }
-      };
-    }
+  document.getElementById('judgeLocalBtn').onclick = ()=>{
+    const name = (document.getElementById('judgeNameInp').value||'').trim();
+    const code = (document.getElementById('judgeCodeInp').value||'').trim();
+    if(!name){ alert('Please enter your name'); return; }
+    const matched = findJudgeByCode(code);
+    if(!matched){ alert('Judge PIN required and not found. Ask the admin.'); return; }
+    signInJudge(name);             // set role/name
+    state.me.judgeId = matched.id; // bind to judge
+    saveState(); render();
+  };
+
+  document.getElementById('judgeAnonBtn').onclick = async ()=>{
+    const name = (document.getElementById('judgeNameInp').value||'').trim() || 'Judge';
+    const code = (document.getElementById('judgeCodeInp').value||'').trim();
+    try{
+      const matched = findJudgeByCode(code);
+      if(!matched){ alert('Judge PIN required and not found. Ask the admin.'); return; }
+      await ensureFirebase();
+      const r = await fb.auth.signInAnonymously();
+      signInJudge(name, r.user.uid);
+      state.me.judgeId = matched.id; matched.userId = r.user.uid;
+      saveState(); syncUp(true); render();
+    }catch(e){ alert('Anonymous sign-in failed: '+e.message+'\nTip: Admin must enable Firebase first.'); }
+  };
+}
 
     // --- Setup View ---
     function renderSetup(root){
