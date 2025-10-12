@@ -124,17 +124,16 @@
     // --- Simple state & storage ---
     const LS_KEY = 'pageant_scoring_v2';
     const state = loadState() || {
-      judges: [], // {id, name, userId?}
-      contestants: [], // {id, name, number, category}
-      rounds: [], // {id, name, type, weight, maxPoints}
-      scores: {}, // key `${judgeId}|${contestantId}|${roundId}` -> {score, notes}
-      settings: { roundAggregation: 'average' }, // 'average' | 'sum'
-      cloud: { enabled:false, eventCode:'', autoSync:true },
-      me: { uid:null, name:'', role:'' }, // role: 'admin' | 'judge' | '' (logged out)
-      ui: { loginMode: null },
-      audit: [] // {ts, user, action, details}
-    };
-
+  judges: [], // {id, name, userId?, code?}
+  contestants: [], // {id, name, number, category}
+  rounds: [], // {id, name, type, weight, maxPoints}
+  scores: {}, // key `${judgeId}|${contestantId}|${roundId}` -> {score, notes}
+  settings: { roundAggregation: 'average', requireJudgeCode: true }, // PIN required
+  cloud: { enabled:false, eventCode:'', autoSync:true },
+  me: { uid:null, name:'', role:'', judgeId:null }, // bind judge after PIN login
+  ui: { loginMode: null },
+  audit: [] // {ts, user, action, details}
+};
     function saveState(){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
     function loadState(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)); }catch{return null;} }
 
