@@ -338,7 +338,7 @@
             </div>
             <div class="spacer"></div>
             <table>
-              <thead><tr><th>#</th><th>Name</th><th>Category</th><th></th></tr></thead>
+              <thead><tr><th>Name</th><th>User</th><th>PIN</th><th></th></tr></thead>
               <tbody id="ctsT"></tbody>
             </table>
           </div>
@@ -378,8 +378,25 @@
 
       // Populate tables
       const jt = document.getElementById('judgesT');
-      jt.innerHTML = state.judges.map(j=>`<tr><td>${j.name}</td><td class="mono">${j.userId||''}</td><td>${state.me.role==='admin'?`<button class='btn' data-delj='${j.id}'>Remove</button>`:''}</td></tr>`).join('');
-      jt.querySelectorAll('button[data-delj]').forEach(b=> b.onclick = ()=>{ state.judges = state.judges.filter(x=>x.id!==b.dataset.delj); logAudit('remove_judge', b.dataset.delj); saveState(); syncUp(); render(); });
+jt.innerHTML = state.judges.map(j=>`<tr>
+  <td>${j.name}</td>
+  <td class="mono">${j.userId||''}</td>
+  <td><input class="mono" data-jcode="${j.id}" placeholder="set PIN" value="${j.code||''}" ${isAdmin?'':'disabled'}/></td>
+  <td>${state.me.role==='admin'?`<button class='btn' data-delj='${j.id}'>Remove</button>`:''}</td>
+</tr>`).join('');
+
+jt.querySelectorAll('button[data-delj]').forEach(b=> b.onclick = ()=>{
+  state.judges = state.judges.filter(x=>x.id!==b.dataset.delj);
+  logAudit('remove_judge', b.dataset.delj); saveState(); syncUp(); render();
+});
+jt.querySelectorAll('input[data-jcode]').forEach(inp=>{
+  inp.onchange = ()=>{
+    const j = state.judges.find(x=> x.id===inp.dataset.jcode); if(!j) return;
+    const prev = j.code||''; j.code = (inp.value||'').trim();
+    logAudit('set_judge_code', {judge:j.name, prev, next:j.code});
+    saveState(); syncUp();
+  };
+});
 
       const ct = document.getElementById('ctsT');
       const byNum = [...state.contestants].sort((a,b)=>(a.number||0)-(b.number||0));
@@ -398,7 +415,7 @@
         document.getElementById('addJudgeBtn').onclick = ()=>{
           const name = document.getElementById('judgeName').value.trim();
           if(!name) return;
-          const j = {id:uid(), name, userId:''};
+          const j = {id:uid(), name, userId:'', code:''};
           state.judges.push(j); logAudit('add_judge', name); saveState(); syncUp(); render();
         };
         document.getElementById('addCtBtn').onclick = ()=>{
@@ -422,8 +439,10 @@
     // --- Scoring View (Judge-locked) ---
     function renderScoring(root){
       const judgeOptions = state.judges.map(j=>`<option value='${j.id}'>${j.name}</option>`).join('');
-      const myJudgeId = state.judges.find(j=> j.userId && j.userId===state.me.uid)?.id;
-      const judgeSelectDisabled = state.me.role==='judge';
+const myJudgeId = state.judges.find(j=> j.userId && j.userId===state.me.uid)?.id;
+const boundJudgeId = state.me.judgeId || myJudgeId || null;
+const judgeSelectDisabled = state.me.role==='judge' && !!boundJudgeId;
+
       root.innerHTML = `
         <div class="card sticky">
           <div class="row-between">
@@ -464,10 +483,17 @@
       document.getElementById('scoringSignOutBtn').onclick = ()=>{ signOut(); };
       document.getElementById('toAdminLoginBtn').onclick = ()=>{ goToLogin('admin'); };
 
-      const judgeSel = document.getElementById('scoreJudge');
-      const roundSel = document.getElementById('scoreRound');
-      if(judgeSelectDisabled && myJudgeId){ judgeSel.value = myJudgeId; }
-      judgeSel.onchange = fillRows; roundSel.onchange = fillRows; fillRows();
+     const judgeSel = document.getElementById('scoreJudge');
+const roundSel = document.getElementById('scoreRound');
+if(boundJudgeId){ judgeSel.value = boundJudgeId; }
+judgeSel.onchange = ()=>{
+  if(state.me.role==='judge' && boundJudgeId){
+    judgeSel.value = boundJudgeId; // keep locked
+  }
+  fillRows();
+};
+roundSel.onchange = fillRows;
+fillRows();
 
       function fillRows(){
         const judgeId = judgeSel.value; const roundId = roundSel.value;
@@ -887,6 +913,19 @@
       test('csvEscape comma quoting', ()=>{
         const line = toCSV([["a,b"]]).split('\n')[0]; if(line !== '"a,b"') throw new Error('comma not quoted');
       });
+// Judge PIN tests
+test('login blocked without PIN', ()=>{
+  state.judges=[{id:'A',name:'A',code:'1111'},{id:'B',name:'B',code:'2222'}];
+  const find = (c)=> state.judges.find(j=> String(j.code||'').trim()===(c||'').trim())||null;
+  if(find('')!==null) throw new Error('empty PIN should not match');
+});
+test('login binds correct judge by PIN', ()=>{
+  state.judges=[{id:'A',name:'A',code:'1111'},{id:'B',name:'B',code:'2222'}];
+  const matched = state.judges.find(j=>j.code==='2222'); state.me={uid:null,name:'X',role:'judge',judgeId:matched.id};
+  render();
+  const sel = document.getElementById('scoreJudge');
+  if(sel.value!==matched.id || sel.disabled!==true) throw new Error('judge not locked after PIN');
+});
 
       const el = document.getElementById('testOutput');
       el.innerHTML = out.map(line => `<div class="${line.startsWith('✅')?'test-pass':'test-fail'}">${line}</div>`).join('');
