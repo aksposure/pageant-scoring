@@ -107,7 +107,7 @@
     // --- Utilities ---
     function uid(){ return Math.random().toString(36).slice(2,9); }
     function csvEscape(value){
-      const s = String(value).replace(/"/g, '""'); // escape quotes
+      const s = String(value).replace(/\"/g,'""').replace(/"/g,'""'); // double safety for stray escapes
       return /[",\n]/.test(s) ? `"${s}"` : s;
     }
     function toCSV(rows){
@@ -130,7 +130,8 @@
       scores: {}, // key `${judgeId}|${contestantId}|${roundId}` -> {score, notes}
       settings: { roundAggregation: 'average' }, // 'average' | 'sum'
       cloud: { enabled:false, eventCode:'', autoSync:true },
-      me: { uid:null, name:'', role:'admin' }, // role: 'admin' | 'judge'
+      me: { uid:null, name:'', role:'' }, // role: 'admin' | 'judge' | '' (logged out)
+      ui: { loginMode: null },
       audit: [] // {ts, user, action, details}
     };
 
@@ -142,18 +143,20 @@
 
     // --- Tabs ---
     const routes = [
+      {id:'login', label:'Login'},
       {id:'setup', label:'Setup'},
       {id:'scoring', label:'Scoring'},
       {id:'roundResults', label:'Round Results'},
       {id:'finalResults', label:'Final Results'},
       {id:'settings', label:'Settings'}
     ];
-    let currentTab = 'setup';
+    let currentTab = 'login';
 
     function renderTabs(){
       const el = document.getElementById('tabs');
       el.innerHTML = '';
-      routes.forEach(r => {
+      const vis = visibleTabs();
+      vis.forEach(r => {
         const b = document.createElement('button');
         b.className = 'tab' + (currentTab===r.id?' active':'');
         b.textContent = r.label;
@@ -165,6 +168,9 @@
     function render(){
       renderTabs();
       const el = document.getElementById('view');
+      const role = state.me.role;
+      if(!role || role==='') currentTab = 'login';
+      if(currentTab==='login') return renderLogin(el);
       if(currentTab==='setup') return renderSetup(el);
       if(currentTab==='scoring') return renderScoring(el);
       if(currentTab==='roundResults') return renderRoundResults(el);
@@ -173,6 +179,25 @@
     }
 
     // --- Helpers ---
+    const ADMIN_CODE_LS = 'pageant_admin_code_v1';
+    function getAdminCode(){ return localStorage.getItem(ADMIN_CODE_LS) || 'ADMIN123'; }
+    function setAdminCode(v){ localStorage.setItem(ADMIN_CODE_LS, v); }
+
+    function visibleTabs(){
+      const role = state.me.role;
+      if(role==='admin') return routes.filter(r=> r.id!=='login');
+      if(role==='judge') return routes.filter(r=> r.id==='scoring');
+      return routes.filter(r=> r.id==='login');
+    }
+
+    // Auth/navigation helpers
+    function goToLogin(mode=null){
+      state.ui = state.ui || {}; state.ui.loginMode = mode; state.me.role=''; saveState(); currentTab='login'; render();
+    }
+    function signInAdmin(name){ state.me.role='admin'; state.me.name=name||'Admin'; saveState(); currentTab='setup'; render(); }
+    function signInJudge(name, uid=null){ state.me.role='judge'; state.me.name=name||'Judge'; if(uid) state.me.uid=uid; saveState(); currentTab='scoring'; render(); }
+    function signOut(){ state.me={uid:null,name:'',role:''}; saveState(); currentTab='login'; render(); }
+
     function scoreKey(judgeId, contestantId, roundId){ return `${judgeId}|${contestantId}|${roundId}`; }
 
     function getRoundScore(contestantId, round){
@@ -197,13 +222,80 @@
       if(state.cloud.enabled) pushAudit(entry);
     }
 
+    // --- Login View ---
+    function renderLogin(root){
+      const mode = state.ui?.loginMode;
+      root.innerHTML = `
+        <div class="grid col-2">
+          <div class="card" ${mode==='judge'?'style="outline:1px solid var(--accent)"':''}>
+            <h3>Judge Login</h3>
+            <div class="spacer"></div>
+            <label>Your name</label>
+            <input id="judgeNameInp" placeholder="e.g., Judge Priya"/>
+            <div class="spacer"></div>
+            <button class="btn" id="judgeLocalBtn">Sign In as Judge</button>
+            <button class="btn" id="judgeAnonBtn">Sign in (Firebase Anonymous)</button>
+            <div class="spacer"></div>
+            <div class="muted">Anonymous sign-in requires Firebase to be configured in Settings after an admin logs in.</div>
+          </div>
+
+          <div class="card" ${mode==='admin'?'style="outline:1px solid var(--accent)"':''}>
+            <h3>Admin Login</h3>
+            <div class="spacer"></div>
+            <label>Admin access code</label>
+            <input id="adminCodeInp" placeholder="Enter admin code" type="password"/>
+            <div class="spacer"></div>
+            <label>Your display name</label>
+            <input id="adminNameInp" placeholder="e.g., Event Director"/>
+            <div class="spacer"></div>
+            <button class="btn primary" id="adminLoginBtn">Sign In as Admin</button>
+            <div class="spacer"></div>
+            <div class="muted">Default code is <span class="mono">ADMIN123</span>. You can change it later in Settings.</div>
+          </div>
+        </div>
+      `;
+
+      document.getElementById('adminLoginBtn').onclick = ()=>{
+        const code = (document.getElementById('adminCodeInp').value||'').trim();
+        const name = (document.getElementById('adminNameInp').value||'').trim() || 'Admin';
+        if(code !== getAdminCode()) { alert('Invalid admin code'); return; }
+        signInAdmin(name);
+      };
+
+      document.getElementById('judgeLocalBtn').onclick = ()=>{
+        const name = (document.getElementById('judgeNameInp').value||'').trim();
+        if(!name){ alert('Please enter your name'); return; }
+        signInJudge(name);
+      };
+
+      document.getElementById('judgeAnonBtn').onclick = async ()=>{
+        const name = (document.getElementById('judgeNameInp').value||'').trim() || 'Judge';
+        try{
+          await ensureFirebase();
+          const r = await fb.auth.signInAnonymously();
+          signInJudge(name, r.user.uid);
+        }catch(e){ alert('Anonymous sign-in failed: '+e.message+'\nTip: Admin must enable Firebase first.'); }
+      };
+    }
+
     // --- Setup View ---
     function renderSetup(root){
       const isAdmin = state.me.role==='admin';
       const weightTotal = sumWeights();
       root.innerHTML = `
         <div class="card">
-          <div class="row-between"><div class="row"><h3>Event Setup</h3><span class="pill">Role: ${state.me.role}</span></div>${state.cloud.enabled?`<span class="pill ok">Cloud: ${state.cloud.eventCode||'—'}</span>`:'<span class="pill warn">Local only</span>'}</div>
+          <div class="row-between">
+            <div class="row">
+              <h3>Event Setup</h3>
+              <span class="pill">Role: ${state.me.role||'—'}</span>
+              <div class="pill">User: ${state.me.name||'—'}</div>
+            </div>
+            <div class="row">
+              ${state.cloud.enabled?`<span class=\"pill ok\">Cloud: ${state.cloud.eventCode||'—'}</span>`:'<span class="pill warn">Local only</span>'}
+              <button class="btn" id="setupSignOutBtn">Sign Out</button>
+              <button class="btn" id="toJudgeLoginBtn">Sign In as Judge</button>
+            </div>
+          </div>
         </div>
         <div class="grid col-3">
           <div class="card ${isAdmin?'':'muted'}">
@@ -262,6 +354,10 @@
         </div>
       `;
 
+      // Top bar handlers
+      document.getElementById('setupSignOutBtn').onclick = ()=>{ signOut(); };
+      document.getElementById('toJudgeLoginBtn').onclick = ()=>{ goToLogin('judge'); };
+
       // Populate tables
       const jt = document.getElementById('judgesT');
       jt.innerHTML = state.judges.map(j=>`<tr><td>${j.name}</td><td class="mono">${j.userId||''}</td><td>${state.me.role==='admin'?`<button class='btn' data-delj='${j.id}'>Remove</button>`:''}</td></tr>`).join('');
@@ -279,7 +375,7 @@
       document.getElementById('roundAgg').value = state.settings.roundAggregation;
       document.getElementById('roundAgg').onchange = (e)=>{ state.settings.roundAggregation = e.target.value; logAudit('set_round_aggregation', e.target.value); saveState(); syncUp(); };
 
-      // Add handlers
+      // Add handlers (admin only)
       if(state.me.role==='admin'){
         document.getElementById('addJudgeBtn').onclick = ()=>{
           const name = document.getElementById('judgeName').value.trim();
@@ -311,6 +407,19 @@
       const myJudgeId = state.judges.find(j=> j.userId && j.userId===state.me.uid)?.id;
       const judgeSelectDisabled = state.me.role==='judge';
       root.innerHTML = `
+        <div class="card sticky">
+          <div class="row-between">
+            <div class="row">
+              <h3>Judge Scoring</h3>
+              <span class="pill">Role: ${state.me.role||'—'}</span>
+              <div class="pill">User: ${state.me.name||'—'}</div>
+            </div>
+            <div class="row">
+              <button class="btn" id="scoringSignOutBtn">Sign Out</button>
+              <button class="btn" id="toAdminLoginBtn">Sign In as Admin</button>
+            </div>
+          </div>
+        </div>
         <div class="grid col-3">
           <div class="card">
             <h3>Choose Judge & Round</h3>
@@ -333,6 +442,9 @@
           </div>
         </div>
       `;
+
+      document.getElementById('scoringSignOutBtn').onclick = ()=>{ signOut(); };
+      document.getElementById('toAdminLoginBtn').onclick = ()=>{ goToLogin('admin'); };
 
       const judgeSel = document.getElementById('scoreJudge');
       const roundSel = document.getElementById('scoreRound');
@@ -381,6 +493,9 @@
             </div>
             <div class="row">
               <button class="btn" id="rrCsv">Download CSV</button>
+              <button class="btn" id="rrSignOutBtn">Sign Out</button>
+              <button class="btn" id="rrToAdminBtn">Sign In as Admin</button>
+              <button class="btn" id="rrToJudgeBtn">Sign In as Judge</button>
             </div>
           </div>
         </div>
@@ -398,6 +513,11 @@
       const body = document.getElementById('rrBody');
       roundSel.onchange = renderRows; sortSel.onchange = renderRows;
       renderRows();
+
+      // auth buttons
+      document.getElementById('rrSignOutBtn').onclick = ()=>{ signOut(); };
+      document.getElementById('rrToAdminBtn').onclick = ()=>{ goToLogin('admin'); };
+      document.getElementById('rrToJudgeBtn').onclick = ()=>{ goToLogin('judge'); };
 
       function renderRows(){
         const r = state.rounds.find(x=> x.id===roundSel.value);
@@ -436,6 +556,9 @@
             </div>
             <div class="row">
               <button class="btn" id="frCsv">Download CSV</button>
+              <button class="btn" id="frSignOutBtn">Sign Out</button>
+              <button class="btn" id="frToAdminBtn">Sign In as Admin</button>
+              <button class="btn" id="frToJudgeBtn">Sign In as Judge</button>
             </div>
           </div>
         </div>
@@ -447,6 +570,10 @@
           </table>
         </div>
       `;
+
+      document.getElementById('frSignOutBtn').onclick = ()=>{ signOut(); };
+      document.getElementById('frToAdminBtn').onclick = ()=>{ goToLogin('admin'); };
+      document.getElementById('frToJudgeBtn').onclick = ()=>{ goToLogin('judge'); };
 
       function computeFinal(ct){
         const totalW = sumWeights() || 1; // avoid div by zero
@@ -528,6 +655,17 @@
             <div class="muted">Cloud stores only this event's data in Firestore under <span class="mono">events/{eventCode}</span>.</div>
           </div>
 
+          <div class="card">
+            <h3>Admin Code</h3>
+            <div class="spacer"></div>
+            <label>Set/change the Admin access code (used on the Login page)</label>
+            <input id="adminCodeNew" placeholder="e.g., SECRET-2025" type="password"/>
+            <div class="spacer"></div>
+            <button class="btn" id="saveAdminCodeBtn">Save Admin Code</button>
+            <div class="spacer"></div>
+            <div class="muted">Current default is <span class="mono">ADMIN123</span> until you change it here on an admin session.</div>
+          </div>
+
           <div class="card" style="grid-column: span 2;">
             <div class="row-between"><h3>Audit Log</h3><button class="btn" id="auditCsv">Download CSV</button></div>
             <div class="spacer"></div>
@@ -547,7 +685,7 @@
         try{ await ensureFirebase(); const r = await fb.auth.signInAnonymously(); state.me.uid = r.user.uid; document.getElementById('uidSpan').textContent = state.me.uid; saveState(); }
         catch(err){ alert('Auth failed: '+err.message); }
       };
-      document.getElementById('signOutBtn').onclick = async ()=>{ try{ await ensureFirebase(); await fb.auth.signOut(); state.me.uid=null; saveState(); render(); }catch(e){} };
+      document.getElementById('signOutBtn').onclick = async ()=>{ try{ await ensureFirebase(); await fb.auth.signOut(); }catch(e){} finally { signOut(); } };
 
       // cloud controls
       document.getElementById('initCloudBtn').onclick = async ()=>{
@@ -566,6 +704,13 @@
       };
       document.getElementById('syncNowBtn').onclick = ()=> syncUp(true);
       document.getElementById('autoSyncChk').onchange = (e)=>{ state.cloud.autoSync = e.target.checked; saveState(); };
+
+      // admin code
+      document.getElementById('saveAdminCodeBtn').onclick = ()=>{
+        const v = (document.getElementById('adminCodeNew').value||'').trim();
+        if(!v) { alert('Enter a code'); return; }
+        setAdminCode(v); alert('Admin code updated. It applies on the Login page.');
+      };
 
       // audit table
       const body = document.getElementById('auditBody');
@@ -668,7 +813,8 @@
       // CSV escaping
       test('csvEscape quotes', ()=>{
         const got = toCSV([["a\"b", 1]]);
-        const exp = '"a""b"', line = got.split('\n')[0].split(',')[0];
+        const exp = '"a""b"';
+        const line = got.split('\n')[0].split(',')[0];
         if(line !== exp) throw new Error(`expected ${exp}, got ${line}`);
       });
       test('toCSV newline wrap', ()=>{
@@ -704,6 +850,26 @@
         const val = compute(ct);
         if(Math.abs(val-100)>1e-6) throw new Error('normalization wrong');
       });
+      // Navigation tests
+      test('nav: signInAdmin routes to setup', ()=>{
+        currentTab='login'; signInAdmin('Admin');
+        if(state.me.role!=='admin' || currentTab!=='setup') throw new Error('admin route failed');
+      });
+      test('nav: signInJudge routes to scoring', ()=>{
+        signInJudge('Judge');
+        if(state.me.role!=='judge' || currentTab!=='scoring') throw new Error('judge route failed');
+      });
+      test('nav: signOut routes to login', ()=>{
+        signOut(); if(state.me.role!=='' || currentTab!=='login') throw new Error('signOut did not go to login');
+      });
+      // Extra tests to catch regressions
+      test('htmlAttrEscape ampersand', ()=>{
+        const v = htmlAttrEscape('A & B'); if(!v.includes('&amp;')) throw new Error('no &amp;');
+      });
+      test('csvEscape comma quoting', ()=>{
+        const line = toCSV([["a,b"]]).split('\n')[0]; if(line !== '"a,b"') throw new Error('comma not quoted');
+      });
+
       const el = document.getElementById('testOutput');
       el.innerHTML = out.map(line => `<div class="${line.startsWith('✅')?'test-pass':'test-fail'}">${line}</div>`).join('');
     }
