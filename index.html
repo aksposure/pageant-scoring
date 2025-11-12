@@ -349,13 +349,14 @@
               <span class="pill ${weightTotal===100?'ok':(weightTotal? (Math.abs(weightTotal-100)<=0.5?'ok':'warn'):'warn')}">Weights: ${weightTotal||0}%</span>
             </div>
             <div class="spacer"></div>
-            <div class="grid col-2">
-              <input id="rdName" placeholder="Round name (e.g., Talent)" ${isAdmin?'':'disabled'}/>
-              <input id="rdType" placeholder="Type (e.g., Stage)" ${isAdmin?'':'disabled'}/>
-              <input id="rdWeight" placeholder="Weight %" type="number" ${isAdmin?'':'disabled'}/>
-              <input id="rdMax" placeholder="Max points (e.g., 10)" type="number" ${isAdmin?'':'disabled'}/>
-              <button class="btn primary" id="addRdBtn" ${isAdmin?'':'disabled'}>Add</button>
-            </div>
+          <div class="grid col-2">
+  <input id="rdName" placeholder="Round name (e.g., Talent)" ${isAdmin?'':'disabled'}/>
+  <input id="rdType" placeholder="Type (e.g., Stage)" ${isAdmin?'':'disabled'}/>
+  <input id="rdSub"  placeholder="Sub-round / Sub-category (optional)" ${isAdmin?'':'disabled'}/>
+  <input id="rdWeight" placeholder="Weight %" type="number" ${isAdmin?'':'disabled'}/>
+  <input id="rdMax" placeholder="Max points (0–10 only)" type="number" ${isAdmin?'':'disabled'}/>
+  <button class="btn primary" id="addRdBtn" ${isAdmin?'':'disabled'}>Add</button>
+</div>
             <div class="spacer"></div>
             <table>
               <thead><tr><th>Round</th><th>Type</th><th>Weight %</th><th>Max</th><th></th></tr></thead>
