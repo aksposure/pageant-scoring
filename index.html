@@ -359,7 +359,7 @@
 </div>
             <div class="spacer"></div>
             <table>
-              <thead><tr><th>Round</th><th>Type</th><th>Weight %</th><th>Max</th><th></th></tr></thead>
+            <thead><tr><th>Round</th><th>Type</th><th>Sub-round</th><th>Weight %</th><th>Max</th><th></th></tr></thead>
               <tbody id="rdsT"></tbody>
             </table>
             <div class="spacer"></div>
@@ -406,7 +406,7 @@ jt.querySelectorAll('input[data-jcode]').forEach(inp=>{
       ct.querySelectorAll('button[data-delc]').forEach(b=> b.onclick = ()=>{ state.contestants = state.contestants.filter(x=>x.id!==b.dataset.delc); logAudit('remove_contestant', b.dataset.delc); saveState(); syncUp(); render(); });
 
       const rt = document.getElementById('rdsT');
-      rt.innerHTML = state.rounds.map(r=>`<tr><td>${r.name}</td><td>${r.type||''}</td><td>${r.weight||0}</td><td>${r.maxPoints||10}</td><td>${state.me.role==='admin'?`<button class='btn' data-delr='${r.id}'>Remove</button>`:''}</td></tr>`).join('');
+      rt.innerHTML = state.rounds.map(r=>`<tr><td>${r.name}</td><td>${r.type||''}</td><td>${r.sub||''}</td><td>${r.weight||0}</td><td>${r.maxPoints||10}</td><td>${state.me.role==='admin'?`<button class='btn' data-delr='${r.id}'>Remove</button>`:''}</td></tr>`).join('');
       rt.querySelectorAll('button[data-delr]').forEach(b=> b.onclick = ()=>{ state.rounds = state.rounds.filter(x=>x.id!==b.dataset.delr); logAudit('remove_round', b.dataset.delr); saveState(); syncUp(); render(); });
 
       document.getElementById('roundAgg').value = state.settings.roundAggregation;
@@ -427,14 +427,21 @@ jt.querySelectorAll('input[data-jcode]').forEach(inp=>{
           if(!name) return;
           state.contestants.push({id:uid(), name, number:isNaN(number)?null:number, category}); logAudit('add_contestant', name); saveState(); syncUp(); render();
         };
-        document.getElementById('addRdBtn').onclick = ()=>{
-          const name = document.getElementById('rdName').value.trim();
-          const type = document.getElementById('rdType').value.trim();
-          const weight = parseFloat(document.getElementById('rdWeight').value||'0');
-          const maxPoints = parseFloat(document.getElementById('rdMax').value||'10');
-          if(!name) return;
-          state.rounds.push({id:uid(), name, type, weight:isNaN(weight)?0:weight, maxPoints:isNaN(maxPoints)?10:maxPoints}); logAudit('add_round', name); saveState(); syncUp(); render();
-        };
+document.getElementById('addRdBtn').onclick = ()=>{
+  const name = document.getElementById('rdName').value.trim();
+  const type = document.getElementById('rdType').value.trim();
+  const sub  = (document.getElementById('rdSub')?.value || '').trim();
+  let weight = parseFloat(document.getElementById('rdWeight').value||'0');
+  let maxPoints = parseFloat(document.getElementById('rdMax').value||'10');
+  if(!name) return;
+  if(isNaN(weight)) weight = 0;
+  if(isNaN(maxPoints)) maxPoints = 10;
+  // Enforce 0..10 ceiling per requirement
+  if(maxPoints > 10) maxPoints = 10;
+  if(maxPoints < 0)  maxPoints = 0;
+  state.rounds.push({id:uid(), name, type, sub, weight, maxPoints});
+  logAudit('add_round', {name,type,sub,weight,maxPoints}); saveState(); syncUp(); render();
+};
       }
     }
 
@@ -467,7 +474,10 @@ const judgeSelectDisabled = state.me.role==='judge' && !!boundJudgeId;
             <select id="scoreJudge" ${judgeSelectDisabled?'disabled':''}>${judgeOptions}</select>
             <div class="spacer"></div>
             <label>Round</label>
-            <select id="scoreRound">${state.rounds.map(r=>`<option value='${r.id}'>${r.name} (${r.type||'–'}) • Max ${r.maxPoints||10}</option>`).join('')}</select>
+<select id="scoreRound">${state.rounds.map(r=>`<option value='${r.id}'>${r.name} ${r.sub?('— '+r.sub):''} (${r.type||'–'}) • Max ${Math.min(r.maxPoints||10,10)}</option>`).join('')}</select>
+<div class="spacer"></div>
+<div class="muted" id="roundMeta"></div>
+
             <div class="spacer"></div>
             <div class="pill">${judgeSelectDisabled? 'Judge view is locked to your profile.' : 'Tip: tap a row to enter the score.'}</div>
           </div>
@@ -475,9 +485,15 @@ const judgeSelectDisabled = state.me.role==='judge' && !!boundJudgeId;
             <div class="row-between"><h3>Enter Scores</h3><div class="muted">Contestants: ${state.contestants.length}</div></div>
             <div class="spacer"></div>
             <table>
-              <thead><tr><th>#</th><th>Name</th><th>Category</th><th style="width:110px">Score</th><th>Notes</th></tr></thead>
-              <tbody id="scoreBody"></tbody>
-            </table>
+  <thead><tr><th>#</th><th>Name</th><th>Category</th><th style="width:110px">Score (0–10)</th><th>Notes</th></tr></thead>
+  <tbody id="scoreBody"></tbody>
+</table>
+<div class="spacer"></div>
+<div class="row-between">
+  <div class="muted">Scores auto-save on change. Submit to confirm.</div>
+  <button class="btn primary" id="submitScoresBtn">Submit Scores</button>
+</div>
+
           </div>
         </div>
       `;
@@ -488,14 +504,24 @@ const judgeSelectDisabled = state.me.role==='judge' && !!boundJudgeId;
      const judgeSel = document.getElementById('scoreJudge');
 const roundSel = document.getElementById('scoreRound');
 if(boundJudgeId){ judgeSel.value = boundJudgeId; }
-judgeSel.onchange = ()=>{
-  if(state.me.role==='judge' && boundJudgeId){
-    judgeSel.value = boundJudgeId; // keep locked
-  }
-  fillRows();
-};
-roundSel.onchange = fillRows;
+function updateRoundMeta(){
+  const r = state.rounds.find(x=> x.id===roundSel.value);
+  document.getElementById('roundMeta').textContent =
+    r ? `${r.name}${r.sub? ' — '+r.sub:''} • Type: ${r.type||'–'} • Max: ${Math.min(r.maxPoints||10,10)}` : '';
+}
+judgeSel.onchange = fillRows;
+roundSel.onchange = ()=>{ updateRoundMeta(); fillRows(); };
+updateRoundMeta();
 fillRows();
+
+      //judgeSel.onchange = ()=>{
+ // if(state.me.role==='judge' && boundJudgeId){
+   // judgeSel.value = boundJudgeId; // keep locked
+  //}
+  //fillRows();
+//};
+//roundSel.onchange = fillRows;
+//fillRows();
 
       function fillRows(){
         const judgeId = judgeSel.value; const roundId = roundSel.value;
@@ -521,6 +547,24 @@ fillRows();
         });
       }
     }
+// Submit button
+const submitBtn = document.getElementById('submitScoresBtn');
+submitBtn.onclick = ()=>{
+  const judgeId = judgeSel.value; const roundId = roundSel.value;
+  // Validate all scores are within 0..10
+  let ok = true;
+  body.querySelectorAll('input[data-score]').forEach(inp=>{
+    const v = parseFloat(inp.value||'');
+    const clamped = Math.max(0, Math.min(isNaN(v)?0:v, 10));
+    if(isNaN(v) || v!==clamped){ ok = false; inp.value = clamped; }
+  });
+  saveState(); syncUp(true);
+  const key = `${judgeId}|${roundId}`;
+  state.submissions[key] = new Date().toISOString();
+  saveState(); syncUp(true);
+  logAudit('submit_scores', {judgeId, roundId, when: state.submissions[key]});
+  alert(ok? 'Scores submitted.' : 'Some scores were adjusted to fit 0–10 and then submitted.');
+};
 
     // --- Round Results ---
     function renderRoundResults(root){
