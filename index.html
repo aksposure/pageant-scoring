@@ -126,11 +126,12 @@
     const state = loadState() || {
   judges: [], // {id, name, userId?, code?}
   contestants: [], // {id, name, number, category}
-  rounds: [], // {id, name, type, weight, maxPoints}
+  rounds: [], // {id, name, type, sub, weight, maxPoints}
   scores: {}, // key `${judgeId}|${contestantId}|${roundId}` -> {score, notes}
-  settings: { roundAggregation: 'average', requireJudgeCode: true }, // PIN required
+  submissions: {}, // key `${judgeId}|${roundId}` -> ISO timestamp
+  settings: { roundAggregation: 'average', requireJudgeCode: true },
   cloud: { enabled:false, eventCode:'', autoSync:true },
-  me: { uid:null, name:'', role:'', judgeId:null }, // bind judge after PIN login
+  me: { uid:null, name:'', role:'', judgeId:null },
   ui: { loginMode: null },
   audit: [] // {ts, user, action, details}
 };
